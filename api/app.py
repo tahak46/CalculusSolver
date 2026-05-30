@@ -11,6 +11,7 @@ Startup behaviour:
 
 import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -109,6 +110,15 @@ async def _shutdown():
             pass
 
 
+@asynccontextmanager
+async def lifespan(app):
+    await _startup()
+    try:
+        yield
+    finally:
+        await _shutdown()
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
@@ -128,7 +138,7 @@ async def health(request: Request):
 
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000",
+    "http://localhost:3000,http://127.0.0.1:3000,http://127.0.0.1:8002",
 ).split(",")
 
 app = Starlette(
@@ -147,6 +157,5 @@ app = Starlette(
             allow_headers=["*"],
         )
     ],
-    on_startup=[_startup],
-    on_shutdown=[_shutdown],
+    lifespan=lifespan,
 )
