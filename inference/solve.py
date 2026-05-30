@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 from typing import Any, Dict, List, Optional
 
 import joblib
@@ -8,6 +9,10 @@ import torch
 
 from model.architecture import CalculusModel
 from inference.beam_search import NodeValidityPool, beam_search, load_vocab
+
+
+class _LegacySLaNgTokenizer:
+    pass
 
 
 class CalculusSolverInference:
@@ -74,6 +79,8 @@ class CalculusSolverInference:
         if model_path.endswith((".pt", ".pth")):
             return torch.load(model_path, map_location="cpu")
         try:
+            if not hasattr(sys.modules["__main__"], "SLaNgTokenizer"):
+                setattr(sys.modules["__main__"], "SLaNgTokenizer", _LegacySLaNgTokenizer)
             return joblib.load(model_path)
         except Exception as exc:
             raise RuntimeError(
