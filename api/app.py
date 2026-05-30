@@ -1,69 +1,109 @@
+"""
+CalculusSolver API — Starlette only, no FastAPI, no pydantic.
+Compatible with Python 3.10+ including 3.14.
+"""
+
 import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
+from starlette.routing import Route, Mount
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from api.routes.solve import router as solve_router
-from api.routes.validate import router as validate_router
-from inference.solve import CalculusSolverInference
+from api.routes.solve import solve_route
+from api.routes.validate import validate_route
 
-app = FastAPI(title="CalculusSolver API")
+# ── Shared app state (plain dict, no pydantic) ────────────────────────────────
+_state: dict = {"solver": None, "solver_error": None}
 
 
 def _resolve_model_path() -> str:
-    candidate_paths = []
+    candidates = []
     env_path = os.environ.get("MODEL_PATH")
     if env_path:
-        configured_path = Path(env_path)
-        candidate_paths.append(
-            configured_path if configured_path.is_absolute() else ROOT / configured_path
-        )
-    candidate_paths.extend(
-        [
-            ROOT / "checkpoints" / "final" / "best.pt",
-            ROOT / "checkpoints" / "sft" / "best.pt",
-            ROOT / "checkpoints" / "pretrain" / "best.pt",
-        ]
-    )
-
-    for path in candidate_paths:
-        if path.exists():
-            return str(path)
-
+        p = Path(env_path)
+        candidates.append(p if p.is_absolute() else ROOT / p)
+    candidates += [
+        ROOT / "checkpoints" / "final" / "best.pt",
+        ROOT / "checkpoints" / "sft" / "best.pt",
+        ROOT / "checkpoints" / "pretrain" / "best.pt",
+    ]
+    for p in candidates:
+        if p.exists():
+            return str(p)
     raise FileNotFoundError(
-        "No model checkpoint found. Tried: "
-        + ", ".join(str(p) for p in candidate_paths)
+        "No checkpoint found. Tried: " + ", ".join(str(p) for p in candidates)
     )
 
 
-@app.on_event("startup")
-async def startup_event():
+async def _startup():
     try:
+        from inference.solve import CalculusSolverInference
+
         model_path = _resolve_model_path()
-        app.state.solver = CalculusSolverInference(
+        _state["solver"] = CalculusSolverInference(
             model_path=model_path,
             vocab_path=str(ROOT / "tokenizer" / "vocab.json"),
             beam_size=5,
             max_len=256,
         )
-        app.state.solver_error = None
+        print(f"CalculusSolver loaded: {model_path}", flush=True)
     except Exception as exc:
-        app.state.solver = None
-        app.state.solver_error = str(exc)
-        print(f"CalculusSolver API started without solver: {exc}", flush=True)
+        _state["solver"] = None
+        _state["solver_error"] = str(exc)
+        print(f"CalculusSolver started WITHOUT model: {exc}", flush=True)
 
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    solver = getattr(app.state, "solver", None)
+async def _shutdown():
+    solver = _state.get("solver")
     if solver is not None:
-        solver.close()
+        try:
+            solver.close()
+        except Exception:
+            pass
 
 
-app.include_router(solve_router)
-app.include_router(validate_router)
+from starlette.responses import JSONResponse
+
+
+async def health(request):
+    return JSONResponse(
+        {
+            "status": "ok",
+            "solver_loaded": _state["solver"] is not None,
+            "solver_error": _state["solver_error"],
+        }
+    )
+
+
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000",
+).split(",")
+
+app = Starlette(
+    debug=False,
+    routes=[
+        Route("/health", health),
+        Route("/solve", lambda req: solve_route(req, _state)),
+        Route("/validate", validate_route),
+    ],
+    middleware=[
+        Middleware(
+            CORSMiddleware,
+            allow_origins=ALLOWED_ORIGINS,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    ],
+    on_startup=[_startup],
+    on_shutdown=[_shutdown],
+)
