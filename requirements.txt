@@ -1,3 +1,7 @@
 # CalculusSolver — Production/Local Dev dependencies
 starlette>=0.37.0
 uvicorn>=0.29.0
+# Optional neural dependencies for CalculusSolver (inference only)
+torch>=2.2.0
+numpy>=1.26.0
+joblib>=1.4.0
