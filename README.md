@@ -1,574 +1,165 @@
-<!-- Banner -->
-<div align="center">
+# CalculusSolver — Vercel-Ready API
 
-```
- ██████╗ █████╗ ██╗      ██████╗██╗   ██╗██╗     ██╗   ██╗███████╗
-██╔════╝██╔══██╗██║     ██╔════╝██║   ██║██║     ██║   ██║██╔════╝
-██║     ███████║██║     ██║     ██║   ██║██║     ██║   ██║███████╗
-██║     ██╔══██║██║     ██║     ██║   ██║██║     ██║   ██║╚════██║
-╚██████╗██║  ██║███████╗╚██████╗╚██████╔╝███████╗╚██████╔╝███████║
- ╚═════╝╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═════╝ ╚══════╝ ╚═════╝╚══════╝
+A production-ready Python API designed to solve calculus expressions represented in SLaNg AST format. Refactored for seamless deployment on Vercel Serverless Functions.
 
-███████╗ ██████╗ ██╗    ██╗   ██╗███████╗██████╗
-██╔════╝██╔═══██╗██║    ██║   ██║██╔════╝██╔══██╗
-███████╗██║   ██║██║    ██║   ██║█████╗  ██████╔╝
-╚════██║██║   ██║██║    ╚██╗ ██╔╝██╔══╝  ██╔══██╗
-███████║╚██████╔╝███████╗╚████╔╝ ███████╗██║  ██║
-╚══════╝ ╚═════╝ ╚══════╝ ╚═══╝  ╚══════╝╚═╝  ╚═╝
-```
+## Key Features
 
-**A Tree-to-Tree Transformer that solves calculus — natively in SLaNg.**
-
-[![License: Quantum Logics Proprietary](https://img.shields.io/badge/license-Quantum%20Logics%20Proprietary-0f172a?style=flat-square&labelColor=1e293b)](LICENSE)
-[![slangmath](https://img.shields.io/badge/npm-slangmath-0f172a?style=flat-square&labelColor=1e293b&logo=npm)](https://npmjs.com/package/slangmath)
-
-</div>
+1. **Dual Execution Modes**:
+   - **Neural Mode**: Automatically activated if a PyTorch model checkpoint is detected (see checkpoint resolution priority below). Fits full transformer-based inference.
+   - **Fallback Mode**: Automatically active by default. Runs a deterministic, pure-Python polynomial solver (supports `diff`, `partial`, `integrate`, `gradient`, and `tangent_line` operations). Requires zero heavy dependencies, making it extremely fast and lightweight.
+2. **Pure Python Architecture**:
+   - Re-implemented SLaNg AST validation, algebraic verification, and LaTeX conversion in 100% pure Python.
+   - Zero Node.js subprocesses. No dependency on local Node installations.
+3. **Vercel Serverless Optimization**:
+   - Organized as standalone serverless handlers under `api/` using Vercel's native `BaseHTTPRequestHandler` python runtime.
+   - Supercharged build speeds with minimized dependencies (~50MB package limitation compliant).
 
 ---
 
-## What it is
-
-SLaNg knows _how_ to differentiate, integrate, and optimize. You still have to call the right function with the right arguments. **CalculusSolver figures that out.**
-
-Feed it an unsolved SLaNg expression tree. Get back the solved expression, the exact sequence of rules that were applied, and a confidence score — all in native SLaNg, ready to pipe into the next operation.
-
-> _If SLaNg is the calculator, CalculusSolver is the mathematician who decides which buttons to press._
-
----
-
-## 30-second demo
-
-```javascript
-import { CalculusSolver } from "calculussolver";
-import { createTerm, createFraction, slangToLatex } from "slangmath";
-
-const cs = new CalculusSolver();
-
-// Differentiate  2x / (x² + 1)
-const result = await cs.solve({
-  op: "diff",
-  var: "x",
-  expr: createFraction(
-    [createTerm(2, { x: 1 })],
-    [createTerm(1, { x: 2 }), createTerm(1)],
-  ),
-});
-
-console.log(result.status); // "solved"
-console.log(slangToLatex(result.expr)); // \frac{2(1 - x^{2})}{(x^{2} + 1)^{2}}
-console.log(result.confidence); // 0.9981
-console.log(result.steps);
-// [
-//   { rule: "quotient_rule", description: "d/dx[u/v] = (v·u′ − u·v′) / v²" },
-//   { rule: "power_rule",    description: "d/dx[x²+1] = 2x"                },
-//   { rule: "simplify",      description: "cancel common factors"           }
-// ]
-```
-
-`result.expr` is a live SLaNg object. Pipe it straight into `gradient()`, `tangentPlane()`, `evaluateFraction()` — whatever comes next.
-
----
-
-## Architecture
-
-CalculusSolver is a **Tree-to-Tree Transformer**. Both encoder and decoder operate on SLaNg expression trees natively, with no intermediate string format.
-
-```
-  Input SLaNg expression tree
-  ──────────────────────────────────────────────────────
-  { op: "diff", var: "x", expr: createFraction(...) }
-          │
-          │  DFS walk → token sequence
-          │  (depth, sibling_idx, path_hash) position encoding
-          ▼
-  ┌────────────────────────────────────────┐
-  │           Tree Encoder                 │
-  │   8 layers · 512 hidden · 8 heads      │
-  │   + parent-child attention bias        │
-  └────────────────────────────────────────┘
-          │
-          ├─────────────────────────────────┐
-          ▼                                 ▼
-  ┌──────────────────┐          ┌───────────────────────┐
-  │    Rule Head     │          │     Tree Decoder      │
-  │  classifier      │─────────►│  8 layers             │
-  │  per operator    │ rule     │  autoregressive DFS   │
-  │  node in input   │ embed    │  + SLaNg validity     │
-  └──────────────────┘          │    mask at every step │
-          │                     └───────────────────────┘
-          │                                 │
-          └──────────────┬──────────────────┘
-                         ▼
-                ┌─────────────────┐
-                │  Step Tracer    │
-                │  auxiliary head │
-                │  → step.desc    │
-                └─────────────────┘
-                         │
-                         ▼
-                ┌─────────────────┐
-                │  SLaNg Verifier │   runs  differentiateFraction /
-                │  post-hoc       │   gradient / lagrangeMultipliers
-                │  numerical check│   against model output
-                └─────────────────┘
-                         │
-                         ▼
-  Output SLaNg expression + step trace + confidence
-```
-
-### Three design bets that matter
-
-**Bet 1 — SLaNg is the only I/O format.**
-No LaTeX strings, no plain text, no intermediate representation. Every input and output is a `slangmath` object. This eliminates an entire class of parsing errors and means the model's output can always be plugged back into `slangmath` without a conversion step.
-
-**Bet 2 — Rule Head before Decoder.**
-The Rule Head predicts which calculus rule applies at each operator node (`quotient_rule`, `chain_rule`, `power_rule`, etc.) _before_ the Decoder generates the result subtree. Rules map one-to-one with `slangmath`'s internal function names. The model's reasoning is auditable — `result.steps` reflects what the Rule Head actually predicted, not a post-hoc summary.
-
-**Bet 3 — slangmath verifies every answer.**
-After inference, `verifier.js` calls the relevant `slangmath` function on the original input and compares numerically using `evaluateFraction` at 50 random test points. If the model is wrong, `result.status` changes from `"solved"` to `"unverified"`. The answer is still returned — but the caller is told.
-
----
-
-## I/O reference
-
-### Input envelope
-
-```javascript
-// Single-variable derivative
-{ op: "diff",          var:  "x",         expr: <SLaNg> }
-
-// Partial derivative
-{ op: "partial",       var:  "x",         expr: <SLaNg> }
-
-// Indefinite integral
-{ op: "integrate",     var:  "x",         expr: <SLaNg> }
-
-// Definite integral
-{ op: "integrate_def", var:  "x",  lo: 0, hi: Math.PI,  expr: <SLaNg> }
-
-// Limit
-{ op: "limit",         var:  "x",  to: 0, side: "both", expr: <SLaNg> }
-
-// Gradient   ∇f
-{ op: "gradient",      vars: ["x","y"],   expr: <SLaNg> }
-
-// Hessian    H(f)
-{ op: "hessian",       vars: ["x","y"],   expr: <SLaNg> }
-
-// Tangent plane at a point
-{ op: "tangent_plane", vars: ["x","y"],   at: { x:1, y:2 },  expr: <SLaNg> }
-
-// Critical points + classification
-{ op: "optimize",      vars: ["x","y"],   expr: <SLaNg> }
-
-// Constrained optimization  (Lagrange multipliers)
-{ op: "lagrange",      vars: ["x","y"],   objective: <SLaNg>,  constraints: [<SLaNg>] }
-
-// Taylor series
-{ op: "series",        var:  "x",  around: 0, order: 5,  expr: <SLaNg> }
-
-// Directional derivative
-{ op: "dir_deriv",     vars: ["x","y"],   point: {x:1,y:1},  direction: {x:1,y:0},  expr: <SLaNg> }
-```
-
-### Output envelope
-
-```javascript
-{
-  status:     "solved",           // "solved" | "unverified" | "partial" | "unsolvable"
-  op:         "diff",             // mirrors the input op
-  expr:       <SLaNg expression>, // the answer — a live SLaNg object
-  steps: [
-    {
-      step:        1,
-      rule:        "quotient_rule",
-      description: "Apply quotient rule: d/dx[u/v] = (v·u′ − u·v′) / v²",
-      before:      <SLaNg expression>,
-      after:       <SLaNg expression>,
-    },
-    // ...
-  ],
-  latex:      "\\frac{2(1-x^{2})}{(x^{2}+1)^{2}}",  // display only
-  confidence: 0.9981,
-  warnings:   [],
-}
-```
-
----
-
-## More examples
-
-<details>
-<summary><strong>Gradient of a multivariable function</strong></summary>
-
-```javascript
-// ∇f  where  f(x, y) = x² + 2xy + y²
-const result = await cs.solve({
-  op: "gradient",
-  vars: ["x", "y"],
-  expr: {
-    terms: [
-      createTerm(1, { x: 2 }),
-      createTerm(2, { x: 1, y: 1 }),
-      createTerm(1, { y: 2 }),
-    ],
-  },
-});
-
-// result.expr is exactly what slangmath's gradient() returns.
-// Pipe it into tangentPlane(), directionalDerivative(), etc.
-```
-
-</details>
-
-<details>
-<summary><strong>Constrained optimization via Lagrange multipliers</strong></summary>
-
-```javascript
-// Maximize  f(x, y) = x + y   subject to   x² + y² = 1
-const result = await cs.solve({
-  op: "lagrange",
-  vars: ["x", "y"],
-  objective: { terms: [createTerm(1, { x: 1 }), createTerm(1, { y: 1 })] },
-  constraints: [
-    {
-      terms: [createTerm(1, { x: 2 }), createTerm(1, { y: 2 }), createTerm(-1)],
-    },
-  ],
-});
-
-console.log(result.steps);
-// [
-//   { rule: "form_lagrangian",    description: "L = f − λg"       },
-//   { rule: "partial_x",          description: "1 = 2λx"          },
-//   { rule: "partial_y",          description: "1 = 2λy"          },
-//   { rule: "solve_system",       description: "x = y = 1/√2"     },
-//   { rule: "evaluate_objective", description: "f_max = √2"       },
-// ]
-```
-
-</details>
-
-<details>
-<summary><strong>Tangent plane at a point</strong></summary>
-
-```javascript
-// Tangent plane to  z = x² + y²  at  (1, 2)
-const result = await cs.solve({
-  op: "tangent_plane",
-  vars: ["x", "y"],
-  at: { x: 1, y: 2 },
-  expr: { terms: [createTerm(1, { x: 2 }), createTerm(1, { y: 2 })] },
-});
-
-import { tangentToLatex } from "slangmath";
-console.log(tangentToLatex(result.expr)); // "z = 5 + 2x + 4y − 5"
-```
-
-</details>
-
-<details>
-<summary><strong>Taylor series</strong></summary>
-
-```javascript
-import { createFunction } from "slangmath";
-
-// Taylor series of  sin(x)  around 0, order 7
-const result = await cs.solve({
-  op: "series",
-  var: "x",
-  around: 0,
-  order: 7,
-  expr: createFunction("sin", [createTerm(1, { x: 1 })]),
-});
-
-console.log(slangToLatex(result.expr));
-// x − \frac{x^{3}}{6} + \frac{x^{5}}{120} − \frac{x^{7}}{5040}
-```
-
-</details>
-
----
-
-## Benchmarks
-
-Evaluation support is available via `eval/evaluate_model.py`, which compares model predictions against local dataset ground truth. The current repository does not include external benchmark JSON files under `eval/benchmarks`.
-
-| Benchmark                    | Metric                | Score     |
-| ---------------------------- | --------------------- | --------- |
-| AP Calculus AB               | Numerical equivalence | **92.4%** |
-| AP Calculus BC               | Numerical equivalence | **88.1%** |
-| MIT 18.01 — single-variable  | Numerical equivalence | **85.7%** |
-| MIT 18.02 — multivariable    | Numerical equivalence | **78.3%** |
-| Lagrange multiplier problems | Solution match        | **74.6%** |
-| Step-level rule accuracy     | Rule match per step   | **89.2%** |
-
----
-
-## Dataset
-
-Every training pair is generated by `slangmath` acting as the ground-truth oracle. No external math engine. No LaTeX string parsing at training time.
-
-| Source                      | Pairs     | Generation method                            |
-| --------------------------- | --------- | -------------------------------------------- |
-| SLaNg self-play (synthetic) | 5 000 000 | Random trees → slangmath solves → verified   |
-| AP Calculus problems        | 40 000    | `latexToSlang()` → slangmath solves          |
-| MIT OCW problems            | 120 000   | `latexToSlang()` → slangmath solves          |
-| Multivariable problems      | 200 000   | `gradient`, `hessian`, `lagrangeMultipliers` |
-| Taylor series examples      | 80 000    | `slang-advanced.js`                          |
-
-### Self-play pipeline
-
-```javascript
-// data_pipeline/generate_synthetic.js
-import { createTerm, createFraction, differentiateFraction } from "slangmath";
-import { gradient, lagrangeMultipliers, findCriticalPoints } from "slangmath";
-
-const gen = new SlangTreeGenerator({ maxDepth: 5, vars: ["x", "y"] });
-
-for (let i = 0; i < 5_000_000; i++) {
-  const inputTree = gen.sample(); // random SLaNg expression
-  const outputTree = solveWithSlang(inputTree); // slangmath does the math
-  if (outputTree.valid) dataset.push({ input: inputTree, output: outputTree });
-}
-```
-
----
-
-## Training
-
-Three stages. Each builds on the previous checkpoint.
-
-### Stage 1 — Masked SLaNg tree pretraining
-
-Randomly mask 20% of operator nodes in SLaNg trees. Train the encoder-decoder to reconstruct them. No calculus is involved — this stage teaches the model the structural grammar of valid SLaNg expressions.
-
-```bash
-python training/pretrain.py \
-  --config training/config/pretrain.yaml \
-  --data   data/splits/train \
-  --output checkpoints/pretrain/
-```
-
-```yaml
-# pretrain.yaml
-model:
-  encoder_layers: 8
-  decoder_layers: 8
-  hidden_dim: 512
-  heads: 8
-
-training:
-  batch_size: 128
-  lr: 2e-4
-  warmup_steps: 5000
-  max_steps: 300000
-  mask_ratio: 0.20
-  fp16: true
-```
-
-### Stage 2 — Supervised fine-tuning
-
-Train the full model on complete (input SLaNg → output SLaNg + steps) pairs. The Rule Head and Step Tracer are trained here for the first time.
-
-```bash
-python training/finetune.py \
-  --checkpoint checkpoints/pretrain/best.pt \
-  --config     training/config/finetune.yaml \
-  --data       data/splits/train \
-  --output     checkpoints/sft/
-```
-
-### Stage 3 — SLaNg-in-the-loop hard example training
-
-For each generated solution, run the corresponding `slangmath` function and compare outputs numerically via `evaluateFraction`. Wrong answers are upweighted at a ratio of 40% per batch.
-
-```bash
-python training/verifier_loop.py \
-  --checkpoint       checkpoints/sft/best.pt \
-  --hard_example_ratio 0.4 \
-  --output           checkpoints/final/
-```
-
----
-
-## Installation
-
-```bash
-# Clone the repo
-git clone https://github.com/your-org/CalculusSolver.git
-cd CalculusSolver
-
-# Node (data pipeline, tokenizer, verifier, eval)
-npm install        # installs slangmath and other JS deps
-
-# Python (model training, inference server)
-pip install -r requirements.txt
-```
-
-### Model checkpoint
-
-The API looks for a trained model checkpoint in this order:
-
-1. `MODEL_PATH`, if set
-2. `checkpoints/final/best.pt`
-3. `checkpoints/sft/best.pt`
-4. `checkpoints/pretrain/best.pt`
-
-If no compatible checkpoint exists yet, the FastAPI server still starts so non-model routes such as `/validate` remain available. Calls to `/solve` return HTTP `503` with the missing-checkpoint message until a checkpoint is trained or copied into one of the paths above.
-
-To use a checkpoint in a custom location:
-
-```bash
-MODEL_PATH=checkpoints/final/best.pt uvicorn api.app:app --host 0.0.0.0 --port 8000 --workers 1
-```
-
-Run the inference server:
-
-```bash
-uvicorn api.app:app --host 0.0.0.0 --port 8000 --workers 1
-```
-
-Point the JS client at it:
-
-```javascript
-const cs = new CalculusSolver({ endpoint: "http://localhost:8000" });
-```
-
----
-
-## Project structure
+## Directory Structure
 
 ```
 CalculusSolver/
-│
 ├── api/
-│   ├── app.py
-│   └── routes/
-│       ├── solve.py
-│       └── validate.py
-│
-├── checkpoints/
-│   └── final/               ← trained model checkpoints
-│
-├── data/
-│   ├── dataset.json
-│   └── ...
-│
-├── data_pipeline/
-│   ├── data_generator.py
-│   ├── generate_slang_data.js
-│   ├── generate_flat_vocab.js
-│   ├── split_data.js
-│   └── verify.js
-│
-├── docs/
-│   ├── ARCHITECTURE.md
-│   └── GUIDE.md
-│
-├── eval/
-│   └── evaluate_model.py
-│
-├── experiments/
-│   ├── advanced-examples.js
-│   ├── complete-guide.js
-│   ├── converter-demo.js
-│   ├── quick-slang.js
-│   ├── slang-basic-test-01.js
-│   ├── slang-extended-test.js
-│   ├── test-converter.js
-│   ├── test-slang.js
-│   └── v2-examples.js
+│   ├── _shared.py       # Shared solver loading, LaTeX formatting & CORS helpers
+│   ├── index.py         # GET /api (Health Check & Active Mode info)
+│   ├── solve.py         # POST /api/solve (Calculus solving handler)
+│   └── validate.py      # POST /api/validate (SLaNg AST structure validator)
+│   └── app.py           # Starlette server (for local dev)
 │
 ├── inference/
-│   ├── inference_engine.py
-│   └── solve.py
+│   ├── beam_search.py   # Pure-Python search logic
+│   ├── fallback_solver.py # Deterministic polynomial solver
+│   ├── solve.py         # Neural model loader & solver pipeline
+│   └── verifier.py      # Pure-Python math verifier & test-point evaluator
 │
 ├── model/
-│   └── ...
-│
-├── package.json
-├── requirements.txt
-├── setup.ps1
-├── setup.sh
-├── slang/
-│   ├── package.json
-│   ├── README.md
-│   ├── script/
-│   ├── src/
-│   ├── tests/
-│   └── website/
+│   ├── architecture.py  # PyTorch model definitions
+│   └── ...              # Tree encoder, tree decoder, rule heads
 │
 ├── tokenizer/
-│   ├── generate_flat_vocab.js
-│   └── vocab.json
+│   ├── slang_serializer.py # Pure-Python SLaNg AST serializer/deserializer
+│   └── vocab.json       # SLaNg vocabulary mappings
 │
-├── training/
-│   ├── model_trainer.py
-│   ├── pretrain.py
-│   ├── finetune.py
-│   ├── verifier_loop.py
-│   └── __init__.py
-│
-├── website/
-│   ├── index.html
-│   ├── package.json
-│   ├── README.md
-│   └── src/
-│
+├── requirements.txt      # Production-only/local dev dependencies (Starlette, Uvicorn)
+├── requirements-neural.txt # Optional dependencies for neural weights (PyTorch, Numpy)
+├── vercel.json           # Vercel configuration for Python serverless builds
 └── README.md
 ```
 
 ---
 
-## Roadmap
+## Installation & Local Development
 
-- [x] Differentiation — `differentiateFraction`
-- [x] Gradient & Hessian — `gradient`, `hessian`
-- [x] Tangent plane / line — `tangentPlane`, `tangentLine`
-- [x] Critical point classification — `findCriticalPoints`, `classifyCriticalPoint`
-- [x] Lagrange multipliers — `lagrangeMultipliers`
-- [x] Directional derivatives — `directionalDerivative`
-- [x] Step trace generation
-- [x] SLaNg-in-the-loop verifier training
-- [ ] Definite integration
-- [ ] Taylor series — `slang-advanced.js`
-- [ ] ODE solving
-- [ ] Browser playground — live SLaNg editor + CalculusSolver inference
-- [ ] Fine-tuning API for custom SLaNg function libraries
+### 1. Minimal Installation (Fallback Mode)
+For development, testing, and standard Vercel deployments, install the lightweight dependencies:
+```bash
+pip install -r requirements.txt
+```
 
----
+Run the local development server:
+```bash
+uvicorn api.app:app --reload --port 8000
+```
 
-## Contributing
+### 2. Full Neural Installation (Optional)
+If you want to run neural inference locally with model weights, install the neural requirements:
+```bash
+pip install -r requirements-neural.txt
+```
 
-CalculusSolver and SLaNg are sister projects.
-
-- **SLaNg library bugs or new math functions** → [github.com/SENODROOM/SLaNg](https://github.com/SENODROOM/SLaNg)
-- **CalculusSolver model, training, or I/O issues** → this repo
-
-Adding support for a new operation always follows the same four steps:
-
-1. Confirm `slangmath` supports it — or add it there first.
-2. Generate training pairs using `slangmath` as ground truth.
-3. Add the operation to the input envelope schema and `vocab.json`.
-4. Fine-tune from the existing checkpoint (no need to retrain from scratch).
-
-See [`GUIDE.md`](GUIDE.md) for the detailed walkthrough and [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full structural reference.
+Place your trained model weight checkpoint (`best.pt`) in one of the priority locations:
+1. `checkpoints/final/best.pt`
+2. `checkpoints/sft/best.pt`
+3. `checkpoints/pretrain/best.pt`
+4. Or set the `MODEL_PATH` environment variable pointing to your `.pt` file.
 
 ---
 
-## License
+## API Endpoints
 
-| Asset         | License                                                              |
-| ------------- | -------------------------------------------------------------------- |
-| Code          | [Quantum Logics Proprietary](LICENSE)                                |
-| Model weights | [Quantum Logics Proprietary](LICENSE)                                |
-| SLaNg library | see [github.com/SENODROOM/SLaNg](https://github.com/SENODROOM/SLaNg) |
+### 1. GET `/api` (or `/health` on local dev)
+Returns active solver configuration and health status.
+**Response**:
+```json
+{
+  "status": "ok",
+  "solver_mode": "fallback",
+  "solver_loaded": true,
+  "checkpoint_error": "No checkpoint found..."
+}
+```
+
+### 2. POST `/api/solve` (or `/solve` on local dev)
+Solves a calculus operation on the given SLaNg AST expression.
+**Request Body**:
+```json
+{
+  "input": {
+    "op": "diff",
+    "var": "x",
+    "expr": {
+      "numi": {
+        "terms": [{"coeff": 3, "var": {"x": 2}}]
+      },
+      "deno": 1
+    }
+  }
+}
+```
+**Response**:
+```json
+{
+  "status": "solved",
+  "expr": {
+    "numi": {
+      "terms": [{"coeff": 6, "var": {"x": 1}}]
+    },
+    "deno": 1
+  },
+  "steps": [
+    {
+      "rule": "power_rule",
+      "description": "Differentiated with respect to x using the power rule.",
+      "before": "3x^{2}",
+      "after": "6x"
+    }
+  ],
+  "latex": "6x",
+  "confidence": 1.0,
+  "verified": true,
+  "warning": "Fallback mode — no neural checkpoint loaded.",
+  "rule": "power_rule",
+  "mode": "fallback"
+}
+```
+
+### 3. POST `/api/validate` (or `/validate` on local dev)
+Validates that the provided SLaNg AST node or structure can be serialized.
+**Request Body**:
+```json
+{
+  "expression": {
+    "numi": {
+      "terms": [{"coeff": 3, "var": {"x": 2}}]
+    },
+    "deno": 1
+  }
+}
+```
+**Response**:
+```json
+{
+  "valid": true
+}
+```
 
 ---
 
-<div align="center">
+## Vercel Deployment
 
-_CalculusSolver — the intelligence layer above SLaNg. Same language, both directions._
-
-</div>
+Deploying the CalculusSolver API to Vercel is simple. You can use the Vercel CLI:
+```bash
+vercel
+```
+Or connect your GitHub repository containing this codebase directly to your Vercel dashboard. Vercel will automatically read `vercel.json`, build the serverless functions using `@vercel/python`, and expose the endpoints.

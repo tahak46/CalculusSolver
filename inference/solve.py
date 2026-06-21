@@ -97,38 +97,14 @@ class CalculusSolverInference:
         raise ValueError("Unsupported checkpoint format for model state.")
 
     def _serialize_input(self, input_env: Dict[str, Any]) -> List[str]:
-        script = os.path.join(os.path.dirname(__file__), "serialize_input.js")
-        proc = subprocess.run(
-            ["node", "--input-type=module", script],
-            input=json.dumps(input_env),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"Input serialization failed: {proc.stderr.strip() or proc.stdout.strip()}"
-            )
-        result = json.loads(proc.stdout)
-        return result["tokens"]
+        from tokenizer.slang_serializer import serialize_slang_math
+        return serialize_slang_math(input_env)
 
     def _verify_output(
         self, input_env: Dict[str, Any], output_tokens: List[str]
     ) -> Dict[str, Any]:
-        script = os.path.join(os.path.dirname(__file__), "verifier.js")
-        payload = {"input": input_env, "output_tokens": output_tokens}
-        proc = subprocess.run(
-            ["node", "--input-type=module", script],
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode not in (0, 1):
-            raise RuntimeError(
-                f"Output verification failed: {proc.stderr.strip() or proc.stdout.strip()}"
-            )
-        return json.loads(proc.stdout)
+        from inference.verifier import verify
+        return verify(input_env, output_tokens)
 
     def solve(self, input_env: Dict[str, Any]) -> Dict[str, Any]:
         token_strings = self._serialize_input(input_env)
