@@ -209,8 +209,7 @@ def deserialize_slang_math(tokens: List[str]) -> Any:
         index = expect_token(index, DENO)
         denominator_terms, index = parse_wrapped_term_list(index)
         index = expect_token(index, CLOSE)
-        index = expect_token(index, CLOSE)
-
+        
         return {
             "numi": {"terms": numerator_terms},
             "deno": {"terms": denominator_terms},

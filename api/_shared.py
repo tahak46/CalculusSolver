@@ -136,9 +136,38 @@ def get_solver():
             _solver_error = str(exc)
             print(f"[CalculusSolver] Groq load failed: {exc}", flush=True)
 
-    # 2. Fall back to deterministic solver (pure Python, no model)
-    from inference.fallback_solver import FallbackSolver
+    # 2. Try neural solver — resolve checkpoint path first
+    model_path, stage = _resolve_model_path()
+    if model_path is not None:
+        try:
+            from inference.solve import CalculusSolverInference
+            _solver = CalculusSolverInference(model_path=model_path)
+            _solver_mode = "neural"
+            _solver_error = None
+            print(
+                f"[CalculusSolver] Neural model loaded from stage='{stage}' path='{model_path}'",
+                flush=True,
+            )
+            return _solver, _solver_mode
+        except Exception as exc:
+            _solver_error = str(exc)
+            print(
+                f"[CalculusSolver] Neural load failed (stage='{stage}', path='{model_path}'): {exc}",
+                flush=True,
+            )
+    else:
+        _solver_error = (
+            "No neural checkpoint found. Checked: MODEL_PATH env, "
+            "checkpoints/final/best.pt, checkpoints/sft/best.pt, "
+            "checkpoints/pretrain/best.pt."
+        )
+        print(
+            f"[CalculusSolver] No checkpoint found — skipping neural solver. {_solver_error}",
+            flush=True,
+        )
 
+    # 3. Fallback
+    from inference.fallback_solver import FallbackSolver
     _solver = FallbackSolver()
     _solver_mode = "fallback"
     if not _solver_error:
@@ -220,7 +249,7 @@ def fraction_to_latex(expr: dict) -> str:
 
 def normalize_solver_result(result: dict, mode: str) -> dict:
     """Normalize/unwrap solver output into the standard API response format."""
-    if mode == "neural":
+    if mode in ("neural", "inference"):
         output = result.get("output") or {}
         if isinstance(output, dict) and "expr" in output:
             expr = output["expr"]
@@ -235,10 +264,10 @@ def normalize_solver_result(result: dict, mode: str) -> dict:
             "steps": steps,
             "latex": latex,
             "confidence": float(result.get("confidence", 0.0)),
-            "verified": result.get("verified"),
+            "verified": bool(result.get("verified")),
             "warning": result.get("warning"),
             "rule": result.get("rule"),
-            "mode": "neural",
+            "mode": mode,
         }
     else:
         # Fallback and Groq solver results already have the correct structure
