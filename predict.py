@@ -1,7 +1,14 @@
 import sys
 import json
 import torch
-from solver_model import CalculusSolverModel  # Corrected shared module mapping
+from pathlib import Path
+from solver_model import CalculusSolverModel
+
+try:
+    from tokenizer.slang_serializer import SlangTokenizer
+    HAS_REAL_TOKENIZER = True
+except (ImportError, ModuleNotFoundError):
+    HAS_REAL_TOKENIZER = False
 
 with open("config.json", "r") as cfg_file:
     config = json.load(cfg_file)
@@ -15,15 +22,25 @@ def evaluate_cli_input():
     print(f"📥 Real Prompt Parsed: {user_input}")
     v_size = config["vocab_size"]
     
-    encoded_src = [((ord(c) % (v_size - 3)) + 3) for c in user_input]
+    # 🎯 FIX: Use real team tokenizer or vocab mapping to build input tensors
+    if HAS_REAL_TOKENIZER:
+        tokenizer = SlangTokenizer()
+        encoded_src = tokenizer.encode(user_input)
+    else:
+        vocab_mapping = {}
+        vocab_path = Path("vocab.json")
+        if vocab_path.exists():
+            with open(vocab_path, "r", encoding="utf-8") as f:
+                vocab_mapping = json.load(f)
+        tokens = user_input.split()
+        encoded_src = [vocab_mapping.get(t, vocab_mapping.get("<unk>", 3)) for t in tokens]
+
     if len(encoded_src) < 20:
         encoded_src += [0] * (20 - len(encoded_src))
     src_tensor = torch.tensor([encoded_src[:20]], dtype=torch.long)
     dummy_tgt = torch.zeros((1, 20), dtype=torch.long)
     
     rules_inverse = {0: "power rule", 1: "trig derivative", 2: "exponential rule", 3: "logarithmic rule"}
-    
-    # 🎯 FIX 3: Dynamic Constructor Signature alignment (Removed embedding_dim param match)
     model = CalculusSolverModel(vocab_size=v_size, hidden_dim=config["hidden_dim"])
     
     try:
